@@ -1,21 +1,27 @@
 QBCore = exports['qb-core']:GetCoreObject()
 local PlayerData = QBCore.Functions.GetPlayerData()
 
+sellingVehicleName = nil
+selingVehiclePrice = nil
+sellingVehicleModel = nil
+sellingVehiclePlate = nil
+sellingVehicleVeh = nil
+
 AddEventHandler('onResourceStart', function(resourceName)
     if GetCurrentResourceName() == resourceName then 
         PlayerJob = QBCore.Functions.GetPlayerData().job 
-        CrownsPed()
+        OttosPed()
     end
 end)
 
 AddEventHandler('QBCore:Client:OnPlayerLoaded', function()
     PlayerJob = QBCore.Functions.GetPlayerData().job
-    CrownsPed()
+    OttosPed()
 end)
 
 AddEventHandler('onResourceStop', function(resourceName) 
 	if GetCurrentResourceName() == resourceName then
-        DeletePed(CrownsPed())
+        DeletePed(OttosPed())
 	end 
 end)
 
@@ -23,6 +29,10 @@ RegisterNetEvent('QBCore:Client:OnJobUpdate')
 AddEventHandler('QBCore:Client:OnJobUpdate', function(JobInfo)
     PlayerJob = JobInfo
 end)
+
+function all_trim(s)
+    return s:match"^%s*(.*)":match"(.-)%s*$"
+end
 
 local function DrawText3D(x, y, z, text)
 	SetTextScale(0.35, 0.35)
@@ -51,19 +61,69 @@ CreateThread(function()
 end)
 
 RegisterNetEvent('sl-dealerships:client:spawnSellingVehicle', function(data)
-    local vehicle = data.vehicle.model
-    local vehiclename = data.vehicle.name
+    sellingVehicleModel = data.vehicle.model
+    sellingVehicleName = data.vehicle.name
+    sellingVehiclePrice = data.vehicle.price
     local location = Config.OttosVehicleSpawn
  
     if QBCore.Functions.SpawnClear(vector3(location.x, location.y, location.z), 2.0) then
+        QBCore.Functions.Notify('You have taken out the '..sellingVehicleName..", interact with to vehicle to sell it", 'info')
         QBCore.Functions.TriggerCallback('QBCore:Server:SpawnVehicle', function(netId)
-            local veh = NetToVeh(netId)
+            veh = NetToVeh(netId)
+            sellingVehiclePlate = all_trim(GetVehicleNumberPlateText(veh))
+            sellingVehicleVeh = veh
+
+            SetVehicleNumberPlateText(veh, sellingVehiclePlate)
             SetVehicleEngineOn(veh, true)
-            exports['LegacyFuel']:SetFuel(veh, 100.0)
-        end, vehicle, location, false)
+            SetVehicleDoorsLocked(veh, 2)
+            SetVehicleFixed(veh)
+            exports['cdn-fuel']:SetFuel(veh, 100.0)
+            
+            local bones = {
+                'boot',
+                'bonnet',
+                'chassis',
+                'bumper_r',
+                'bumper_f',
+                'bodyshell',
+                'door_dside_f',
+                'door_dside_r',
+                'door_pside_f',
+                'door_pside_r',
+            }
+
+            exports['qb-target']:AddTargetBone(bones, {
+                options = {
+                    {
+                        num = 1,
+                        type = "client",
+                        event = "sl-dealerships:client:purchasevehiclemenu",
+                        icon = "fa-solid fa-dollar-sign",
+                        label = "Select Customer for Purchase",
+                        job = "ottos"
+                    },
+                    {
+                        num = 2,
+                        type = "client",
+                        event = "sl-dealerships:client:returnVehicle",
+                        icon = "fa-solid fa-rotate-left",
+                        label = "Return Vehicle",
+                        job = "ottos",
+                    }
+                },
+                distance = 2,
+            })
+        end, sellingVehicleModel, location, false)
     else
-        QBCore.Functions.Notify('The area to bring in the '..vehiclename.." isn't clear, remove all vehicles or players out of the area", 'error')
+        QBCore.Functions.Notify('The area to bring in the '..sellingVehicleName.." isn't clear, remove all vehicles or players out of the area", 'error')
     end
+end)
+
+RegisterNetEvent('sl-dealerships:client:returnVehicle', function(data)
+    DeleteVehicle(veh)
+    QBCore.Functions.Notify('You have returned the vehicle back into '..PlayerJob.label.." vehicle's stock.", 'success')
+    exports['qb-target']:RemoveTargetEntity(veh, "Purchase Vehicle")
+    exports['qb-target']:RemoveTargetEntity(veh, "Return Vehicle")
 end)
 
 RegisterNetEvent('sl-dealerships:client:spawnTestDriveVehicle', function(data)
@@ -76,7 +136,8 @@ RegisterNetEvent('sl-dealerships:client:spawnTestDriveVehicle', function(data)
         QBCore.Functions.TriggerCallback('QBCore:Server:SpawnVehicle', function(netId)
             local veh = NetToVeh(netId)
             SetVehicleEngineOn(veh, true)
-            exports['LegacyFuel']:SetFuel(veh, 100.0)
+            TriggerEvent('vehiclekeys:client:SetOwner', QBCore.Functions.GetPlate(veh))
+            exports['cdn-fuel']:SetFuel(veh, 100.0)
         end, vehicle, location, false)
     else
         QBCore.Functions.Notify('The area to bring in the '..vehiclename.." isn't clear, remove all vehicles or players out of the area", 'error')
@@ -106,24 +167,29 @@ end)
 
 -- SELLING VEHICLE --
 
-RegisterNetEvent('sl-dealerships:client:sellavehiclemenu', function(data)
-    local SellVehicleMenu = {
+RegisterNetEvent('sl-dealerships:client:purchasevehiclemenu', function(data)
+    local PurchaseVehicleMenu = {
         {
             icon = "fas fa-car",
-            header = PlayerJob.label.. " | Select Nearest Customer",
+            header = "Otto's Exotic | Confirmation",
             isMenuHeader = true
         },
     }
-    QBCore.Functions.TriggerCallback('sl-dealerships:server:getnearestplayer', function(players)
+    QBCore.Functions.TriggerCallback('sl-dealerships:server:getnearestplayers', function(players)
         for _, vp in pairs(players) do
-            if vp and vp ~= PlayerId() then
-                SellVehicleMenu[#SellVehicleMenu + 1] = {
-                    header = vp.name,
-                    txt = "Player ID: " ..vp.sourceplayer,
-                    icon = "fa-solid fa-user-check",
+            if vp and vp ~= PlayerPedId() then
+                PurchaseVehicleMenu[#PurchaseVehicleMenu + 1] = {
+                    header = "Are you sure you want to bill "..vp.name.." for the "..sellingVehicleName.."?",
+                    txt = "Click to send bill of $"..sellingVehiclePrice,
+                    icon = "fa-solid fa-dollar-sign",
                     params = {
-                        event = "sl-dealerships:client:sellvehiclecategories",
+                        isServer = true,
+                        event = "sl-dealerships:server:sellVehicle",
                         args = {
+                            sellingVehiclePrice = sellingVehiclePrice,
+                            sellingVehicleName = sellingVehicleName,
+                            sellingVehicleModel = sellingVehicleModel,
+                            sellingVehiclePlate = sellingVehiclePlate,
                             target = vp.sourceplayer
                         }
                     }
@@ -131,16 +197,31 @@ RegisterNetEvent('sl-dealerships:client:sellavehiclemenu', function(data)
             end
         end
 
-        SellVehicleMenu[#SellVehicleMenu+1] = {
+        PurchaseVehicleMenu[#PurchaseVehicleMenu+1] = {
+            icon = "fa-solid fa-dollar-sign",
+            header = "Purchase vehicle for yourself",
+            txt = "Click to confirm payment of $"..sellingVehiclePrice.." for the "..sellingVehicleName ,
+            params = {
+                isServer = true,
+                event = "sl-dealerships:server:selfpurchasesellVehicle",
+                args = {
+                    sellingVehiclePrice = sellingVehiclePrice,
+                    sellingVehicleName = sellingVehicleName,
+                    sellingVehicleModel = sellingVehicleModel,
+                    sellingVehiclePlate = sellingVehiclePlate
+                }
+            }
+        }
+
+        PurchaseVehicleMenu[#PurchaseVehicleMenu+1] = {
             icon = "fas fa-x",
-            header = "Close",
-            txt = "",
+            header = "Exit",
             params = {
                 event = "sl-dealerships:client:close"
             }
         }
 
-        exports['qb-menu']:openMenu(SellVehicleMenu)
+        exports['qb-menu']:openMenu(PurchaseVehicleMenu)
     end)
 end)
 
@@ -343,7 +424,7 @@ RegisterNetEvent('sl-dealerships:client:testvehiclelist', function(data)
     exports['qb-menu']:openMenu(TestDriveVehicleList)
 end)
 
-function CrownsPed()
+function OttosPed()
     if not DoesEntityExist(ottosmodel) then
         RequestModel(Config.OttosPed)
         while not HasModelLoaded(Config.OttosPed) do
@@ -362,10 +443,10 @@ function CrownsPed()
                 {
                     num = 1,
                     type = "client",
-                    event = "sl-dealerships:client:sellavehiclemenu",
+                    event = "sl-dealerships:client:sellvehiclecategories",
                     icon = "fa-solid fa-car",
                     label = "Sell A Vehicle",
-                    job = "crownexotics"
+                    job = "ottos"
                 },
                 {
                     num = 2,
@@ -373,15 +454,8 @@ function CrownsPed()
                     event = "sl-dealerships:client:testvehiclecategories",
                     icon = "fa-solid fa-car",
                     label = "Vehicle Test Drive",
-                    job = "crownexotics"
+                    job = "ottos"
                 },
-                -- {
-                --     num = 3,
-                --     type = "client",
-                --     event = "???",
-                --     icon = "fa-solid fa-list",
-                --     label = "Stock Vehicles (WIP)",
-                -- },
             },
             distance = 2.5,
         })
